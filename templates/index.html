@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Haftalık İş Takip Paneli</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 text-slate-800 pb-20">
+
+    <!-- 1. ÜST BAŞLIK VE HAFTA SEÇİMİ -->
+    <header class="bg-slate-900 text-white p-4 sticky top-0 z-50 shadow-md">
+        <div class="flex justify-between items-center mb-2">
+            <h1 class="font-bold text-base flex items-center gap-2">
+                <span>🛠️</span> İş Takip Paneli
+            </h1>
+            <!-- Excel Yükle Butonu -->
+            <label class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shadow cursor-pointer">
+                <span>📂 Excel Yükle</span>
+                <input type="file" id="excelInput" class="hidden" accept=".xlsx, .xls" onchange="uploadExcel()">
+            </label>
+        </div>
+
+        <!-- HAFTA SEÇİM DROPDOWN -->
+        <div class="flex items-center gap-2 bg-slate-800 p-2 rounded-lg border border-slate-700">
+            <span class="text-xs text-slate-300 font-medium">Aktif Hafta:</span>
+            <select id="weekSelect" onchange="loadWeekData()" class="bg-slate-900 text-white text-xs font-bold p-1.5 rounded border border-slate-600 w-full focus:outline-none">
+                <option value="2026-W30" selected>30. Hafta</option>
+                <option value="2026-W29">29. Hafta</option>
+                <option value="2026-W28">28. Hafta</option>
+            </select>
+        </div>
+    </header>
+
+    <!-- 2. İŞ KARTLARI LİSTESİ -->
+    <main id="jobListContainer" class="p-3 space-y-3">
+        <!-- Kartlar JavaScript ile buraya yüklenecek -->
+        <div class="text-center text-xs text-slate-500 py-6">Yükleniyor...</div>
+    </main>
+
+    <!-- JAVASCRIPT ETKİLEŞİMLERİ -->
+    <script>
+        // Sayfa açıldığında seçili haftanın verisini getir
+        document.addEventListener("DOMContentLoaded", loadWeekData);
+
+        function loadWeekData() {
+            const selectedWeek = document.getElementById('weekSelect').value;
+            const container = document.getElementById('jobListContainer');
+            container.innerHTML = '<div class="text-center text-xs text-slate-500 py-6">İşler getiriliyor...</div>';
+
+            fetch(`/api/get-week-jobs?week=${selectedWeek}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        renderJobs(data.jobs);
+                    } else {
+                        container.innerHTML = `<div class="text-center text-xs text-red-500 py-6">Hata: ${data.message}</div>`;
+                    }
+                });
+        }
+
+        function renderJobs(jobs) {
+            const container = document.getElementById('jobListContainer');
+            if (jobs.length === 0) {
+                container.innerHTML = '<div class="text-center text-xs text-slate-400 py-6">Bu haftaya ait hiç iş kaydı bulunamadı.</div>';
+                return;
+            }
+
+            container.innerHTML = jobs.map(job => {
+                const isCompleted = job.status === 'Tamamlandı';
+                
+                return `
+                    <div class="bg-white p-3.5 rounded-xl border ${isCompleted ? 'border-emerald-300 bg-emerald-50/30' : 'border-slate-200'} shadow-sm relative">
+                        <div class="flex justify-between items-start mb-1">
+                            <div>
+                                <span class="text-[10px] font-bold ${job.priority === 'Yüksek' ? 'text-red-600 bg-red-50' : 'text-slate-600 bg-slate-100'} px-2 py-0.5 rounded">
+                                    ${job.priority} Öncelik
+                                </span>
+                                <h2 class="text-xs font-bold text-slate-900 mt-1">Sipariş: ${job.order_no}</h2>
+                            </div>
+                            <span class="text-[10px] text-slate-400 font-semibold">Bildirim: ${job.notification_no}</span>
+                        </div>
+
+                        <p class="text-xs font-medium my-2 ${isCompleted ? 'line-through text-slate-400' : 'text-slate-800'}">
+                            ${job.title}
+                        </p>
+
+                        <div class="flex justify-between items-center text-[10px] my-2 text-slate-500">
+                            <span class="bg-sky-50 text-sky-700 font-bold px-2 py-0.5 rounded">🏢 ${job.workstation}</span>
+                            <span>📅 ${job.start_date || 'Tarih Yok'}</span>
+                        </div>
+
+                        <!-- EKİP ATAMA VE BİTİRME ALANI -->
+                        <div class="pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2 mt-2">
+                            <!-- Ekip Seçimi -->
+                            <select onchange="updateTeam('${job.id}', this.value)" 
+                                    ${isCompleted ? 'disabled' : ''} 
+                                    class="text-[11px] bg-slate-50 border border-slate-200 text-slate-700 rounded p-1 focus:outline-none w-1/2">
+                                <option value="Atanmadı" ${job.assigned_team === 'Atanmadı' ? 'selected' : ''}>-- Ekip Seç --</option>
+                                <option value="Mekanik Ekip" ${job.assigned_team === 'Mekanik Ekip' ? 'selected' : ''}>Mekanik Ekip</option>
+                                <option value="Elektrik Ekip" ${job.assigned_team === 'Elektrik Ekip' ? 'selected' : ''}>Elektrik Ekip</option>
+                                <option value="Otomasyon Ekip" ${job.assigned_team === 'Otomasyon Ekip' ? 'selected' : ''}>Otomasyon Ekip</option>
+                            </select>
+
+                            <!-- İş Bitir Butonu -->
+                            <button onclick="toggleComplete('${job.id}', '${isCompleted ? 'Bekliyor' : 'Tamamlandı'}')" 
+                                    class="text-[11px] font-bold px-3 py-1 rounded-lg transition-all ${
+                                        isCompleted 
+                                        ? 'bg-emerald-600 text-white hover:bg-emerald-700' 
+                                        : 'bg-slate-200 text-slate-700 hover:bg-emerald-500 hover:text-white'
+                                    }">
+                                ${isCompleted ? '✓ Tamamlandı' : 'Tamamla'}
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Ekip Seçildiğinde Çalışır
+        function updateTeam(jobId, teamName) {
+            fetch('/api/update-job', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ job_id: jobId, assigned_team: teamName })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if(data.status !== 'success') alert("Ekip güncellenemedi!");
+            });
+        }
+
+        // İş Bitirme / Geri Alma İletişimi
+        function toggleComplete(jobId, newStatus) {
+            fetch('/api/update-job', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ job_id: jobId, status: newStatus })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if(data.status === 'success') {
+                    loadWeekData(); // Sayfayı yenilemeden veriyi güncelle
+                } else {
+                    alert("Durum güncellenemedi!");
+                }
+            });
+        }
+
+        // Excel Yükleme
+        function uploadExcel() {
+            const selectedWeek = document.getElementById('weekSelect').value;
+            const fileInput = document.getElementById('excelInput');
+            
+            if (fileInput.files.length === 0) return;
+
+            const formData = new FormData();
+            formData.append('excel', fileInput.files[0]);
+            formData.append('week', selectedWeek);
+
+            fetch('/api/upload-excel', {
+                method: 'POST',
+                body: formData
+            })
+            .then(res => res.json())
+            .then(data => {
+                alert(data.message);
+                if(data.status === 'success') loadWeekData();
+            });
+        }
+    </script>
+</body>
+</html>
