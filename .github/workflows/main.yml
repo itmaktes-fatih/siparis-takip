@@ -11,16 +11,17 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Build with Buildozer Action
-        uses: ArtemSydoryk/buildozer-action@v1
+      - name: Build with Buildozer
+        uses: flet-dev/buildozer-action@v1
         with:
-          save_artifact: true
-          artifact_name: SiparisTakip-APK
+          buildozer_version: master
+          command: buildozer -v android debug
+          subfolder: .
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v3
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
         with:
           name: SiparisTakip-APK
           path: bin/*.apk
