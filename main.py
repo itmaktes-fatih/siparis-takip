@@ -1,160 +1,117 @@
 import os
-from flask import Flask, render_template, request, jsonify
-import openpyxl
+from kivy.app import App
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.label import Label
+from kivy.uix.button import Button
+from kivy.uix.scrollview import ScrollView
+from kivy.uix.gridlayout import GridLayout
+from kivy.clock import Clock
+
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-app = Flask(__name__)
-
-# ---------------------------------------------------------
-# 1. FIREBASE BAĞLANTISI
-# ---------------------------------------------------------
-FIREBASE_KEY_PATH = "firebase_key.json"
-
-if os.path.exists(FIREBASE_KEY_PATH):
-    cred = credentials.Certificate(FIREBASE_KEY_PATH)
-    firebase_admin.initialize_app(cred)
-    db = firestore.client()
-else:
-    print(f"HATA: '{FIREBASE_KEY_PATH}' dosyası bulunamadı!")
-
-# Sadece Y-STATK1 ile Y-STATK9 arasındaki İşlem İş yerlerini kabul ediyoruz
+# Y-STATK1 ile Y-STATK9 arasındaki adımları geçerli sayıyoruz
 VALID_WORKSTATIONS = [f"Y-STATK{i}" for i in range(1, 10)]
 
-# ---------------------------------------------------------
-# 2. ANA SAYFA
-# ---------------------------------------------------------
-@app.route('/')
-def index():
-    return render_template('index.html')
+class SiparisTakipApp(App):
+    def build(self):
+        self.db = None
+        self.init_firebase()
 
-# ---------------------------------------------------------
-# 3. SEÇİLİ HAFTANIN İŞLERİNİ GETİR
-# ---------------------------------------------------------
-@app.route('/api/get-week-jobs', methods=['GET'])
-def get_week_jobs():
-    selected_week = request.args.get('week', '2026-W30')
-    
-    try:
-        jobs_ref = db.collection('weekly_plan').where('week', '==', selected_week)
-        docs = jobs_ref.stream()
-        
-        jobs_list = []
-        for doc in docs:
-            data = doc.to_dict()
-            data['id'] = doc.id
-            jobs_list.append(data)
+        # Ana Düzen (Dikey)
+        main_layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
+
+        # Üst Başlık
+        header = Label(
+            text="Sipariş & İş Takip Sistemi", 
+            size_hint_y=None, 
+            height=50, 
+            font_size='20sp',
+            bold=True
+        )
+        main_layout.add_widget(header)
+
+        # Yenile Butonu
+        btn_refresh = Button(
+            text="İş Listesini Yenile", 
+            size_hint_y=None, 
+            height=50,
+            background_color=(0.2, 0.6, 1, 1)
+        )
+        btn_refresh.bind(on_press=lambda x: self.load_jobs())
+        main_layout.add_widget(btn_refresh)
+
+        # Kaydırılabilir Liste Alanı
+        self.scroll = ScrollView()
+        self.grid = GridLayout(cols=1, spacing=10, size_hint_y=None)
+        self.grid.bind(minimum_height=self.grid.setter('height'))
+        self.scroll.add_widget(self.grid)
+
+        main_layout.add_widget(self.scroll)
+
+        # İlk Açılışta Verileri Yükle
+        Clock.schedule_once(lambda dt: self.load_jobs(), 1)
+
+        return main_layout
+
+    def init_firebase(self):
+        key_path = "firebase_key.json"
+        if os.path.exists(key_path):
+            try:
+                cred = credentials.Certificate(key_path)
+                firebase_admin.initialize_app(cred)
+                self.db = firestore.client()
+            except Exception as e:
+                print(f"Firebase Bağlantı Hatası: {e}")
+
+    def load_jobs(self):
+        self.grid.clear_widgets()
+        if not self.db:
+            self.grid.add_widget(Label(text="Firebase Bağlantısı Yok!", size_hint_y=None, height=40))
+            return
+
+        try:
+            # Seçili haftanın verilerini Firebase'den çekiyoruz
+            docs = self.db.collection('weekly_plan').where('week', '==', '2026-W30').stream()
             
-        return jsonify({'status': 'success', 'jobs': jobs_list}), 200
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-# ---------------------------------------------------------
-# 4. EXCEL YÜKLEME VE İŞLEM İŞYERİ FİLTRELEME
-# ---------------------------------------------------------
-@app.route('/api/upload-excel', methods=['POST'])
-def upload_excel():
-    try:
-        selected_week = request.form.get('week')
-        file = request.files.get('excel')
-        
-        if not file or not selected_week:
-            return jsonify({'status': 'error', 'message': 'Eksik dosya veya hafta seçimi!'}), 400
-
-        wb = openpyxl.load_workbook(file, data_only=True)
-        sheet = wb.active
-
-        headers = [str(cell.value).strip() if cell.value else '' for cell in sheet[1]]
-        
-        required_cols = ['Öncelik', 'Sipariş No', 'Bildirim No', 'Kısa Metin', 'İşlem İşyeri', 'Başlama Tarihi']
-        col_indices = {}
-        
-        for col_name in required_cols:
-            if col_name in headers:
-                col_indices[col_name] = headers.index(col_name)
-            else:
-                return jsonify({'status': 'error', 'message': f"Excel'de eksik sütun: {col_name}"}), 400
-
-        unique_jobs = {}
-        
-        for row in sheet.iter_rows(min_row=2, values_only=True):
-            if not any(row):
-                continue
-            
-            # 1. İŞLEM İŞYERİ FİLTRESİ (Y-STATK1 - Y-STATK9 Kontrolü)
-            workstation_val = str(row[col_indices['İşlem İşyeri']]).strip().upper() if row[col_indices['İşlem İşyeri']] is not None else ''
-            
-            # Eğer İşlem İşyeri Y-STATK1...Y-STATK9 arasında DEĞİLSE atla!
-            if workstation_val not in VALID_WORKSTATIONS:
-                continue
-
-            # 2. HAFTA İÇİ MÜKERRER ELEME (Teke Düşürme)
-            order_no = str(row[col_indices['Sipariş No']]) if row[col_indices['Sipariş No']] is not None else '-'
-            notif_no = str(row[col_indices['Bildirim No']]) if row[col_indices['Bildirim No']] is not None else '-'
-            
-            unique_key = order_no if order_no != '-' else notif_no
-            
-            if unique_key not in unique_jobs and unique_key != '-':
-                priority = str(row[col_indices['Öncelik']]) if row[col_indices['Öncelik']] is not None else 'Normal'
-                title = str(row[col_indices['Kısa Metin']]) if row[col_indices['Kısa Metin']] is not None else ''
+            count = 0
+            for doc in docs:
+                data = doc.to_dict()
+                doc_id = doc.id
                 
-                raw_date = row[col_indices['Başlama Tarihi']]
-                start_date = str(raw_date)[:10] if raw_date is not None else ''
+                # Kart Tasarımı
+                card = BoxLayout(orientation='vertical', size_hint_y=None, height=120, padding=8, spacing=5)
+                
+                title_text = f"[{data.get('workstation', '-')}] Sipariş: {data.get('order_no', '-')}"
+                detail_text = f"{data.get('title', '')} | Durum: {data.get('status', 'Bekliyor')}"
+                
+                card.add_widget(Label(text=title_text, bold=True, size_hint_y=None, height=25))
+                card.add_widget(Label(text=detail_text, size_hint_y=None, height=25))
 
-                unique_jobs[unique_key] = {
-                    'week': selected_week,
-                    'priority': priority,
-                    'order_no': order_no,
-                    'notification_no': notif_no,
-                    'title': title,
-                    'workstation': workstation_val,
-                    'start_date': start_date,
-                    'assigned_team': 'Atanmadı',
-                    'status': 'Bekliyor'
-                }
+                # İş Bittiğinde Tamamla Butonu
+                if data.get('status') != 'Tamamlandı':
+                    btn_complete = Button(
+                        text="Tamamla", 
+                        size_hint_y=None, 
+                        height=35, 
+                        background_color=(0, 0.8, 0.2, 1)
+                    )
+                    btn_complete.bind(on_press=lambda btn, j_id=doc_id: self.complete_job(j_id))
+                    card.add_widget(btn_complete)
 
-        # Firebase Batch Kayıt
-        batch = db.batch()
-        for key, job_data in unique_jobs.items():
-            doc_id = f"{selected_week}_{key}"
-            doc_ref = db.collection('weekly_plan').document(doc_id)
-            batch.set(doc_ref, job_data)
-            
-        batch.commit()
-        return jsonify({'status': 'success', 'message': f'Filtreye uygun {len(unique_jobs)} adet ana iş yüklendi.'}), 200
+                self.grid.add_widget(card)
+                count += 1
 
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+            if count == 0:
+                self.grid.add_widget(Label(text="Bu haftaya ait filtrelenmiş iş bulunamadı.", size_hint_y=None, height=40))
 
-# ---------------------------------------------------------
-# 5. İŞ GÜNCELLEME API
-# ---------------------------------------------------------
-@app.route('/api/update-job', methods=['POST'])
-def update_job():
-    try:
-        data = request.json
-        job_id = data.get('job_id')
-        new_status = data.get('status')
-        assigned_team = data.get('assigned_team')
+        except Exception as e:
+            self.grid.add_widget(Label(text=f"Hata: {str(e)}", size_hint_y=None, height=40))
 
-        if not job_id:
-            return jsonify({'status': 'error', 'message': 'İş ID gereklidir!'}), 400
-
-        doc_ref = db.collection('weekly_plan').document(job_id)
-        
-        update_data = {}
-        if new_status:
-            update_data['status'] = new_status
-        if assigned_team:
-            update_data['assigned_team'] = assigned_team
-            if new_status != 'Tamamlandı':
-                update_data['status'] = 'Atandı'
-
-        doc_ref.update(update_data)
-        return jsonify({'status': 'success', 'message': 'İş güncellendi.'}), 200
-
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+    def complete_job(self, job_id):
+        if self.db:
+            self.db.collection('weekly_plan').document(job_id).update({'status': 'Tamamlandı'})
+            self.load_jobs()
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    SiparisTakipApp().run()
