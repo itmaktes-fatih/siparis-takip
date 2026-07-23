@@ -1,165 +1,262 @@
-import os
-import openpyxl
-import requests
-import json
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
 from kivy.uix.button import Button
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.gridlayout import GridLayout
-from kivy.uix.filechooser import FileChooserListView
+from kivy.uix.textinput import TextInput
 from kivy.uix.popup import Popup
+from kivy.graphics import Color, RoundedRectangle
 from kivy.clock import Clock
+from kivy.core.window import Window
+import requests
+import json
 
+Window.clearcolor = (0.12, 0.12, 0.14, 1)
 FIREBASE_URL = "https://siparis-takip-6046b-default-rtdb.europe-west1.firebasedatabase.app"
-
-# Sadece filtrelenecek geçerli istasyonlar
-VALID_WORKSTATIONS = [f"Y-STATK{i}" for i in range(1, 10)]
 
 class SiparisTakipApp(App):
     def build(self):
-        main_layout = BoxLayout(orientation='vertical', padding=15, spacing=10)
+        self.current_week = None
+        self.all_jobs = {}
+
+        self.main_layout = BoxLayout(orientation='vertical', padding=12, spacing=10)
 
         # Üst Başlık
-        header = Label(
-            text="Sipariş & İş Takip Sistemi", 
+        self.header = Label(
+            text="Haftalık Sipariş Takip", 
             size_hint_y=None, 
-            height=30, 
-            font_size='18sp',
+            height=40, 
+            font_size='20sp',
+            bold=True,
+            color=(1, 1, 1, 1)
+        )
+        self.main_layout.add_widget(self.header)
+
+        # Üst Navigasyon / Geri Butonu Alanı
+        self.nav_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=40, spacing=10)
+        self.btn_back = Button(
+            text="⬅️ Haftalara Dön", 
+            size_hint_x=0.4, 
+            background_normal='',
+            background_color=(0.3, 0.3, 0.35, 1),
             bold=True
         )
-        main_layout.add_widget(header)
-
-        # Butonlar Ekranı (Excel Yükle & Yenile)
-        btn_layout = BoxLayout(orientation='horizontal', size_hint_y=None, height=45, spacing=10)
+        self.btn_back.bind(on_press=lambda x: self.show_weeks_screen())
+        self.nav_layout.add_widget(self.btn_back)
         
-        btn_upload = Button(text="Excel Yükle", background_color=(0.1, 0.7, 0.3, 1))
-        btn_upload.bind(on_press=self.open_file_chooser)
-        btn_layout.add_widget(btn_upload)
+        self.btn_refresh = Button(
+            text="🔄 Yenile", 
+            size_hint_x=0.6, 
+            background_normal='',
+            background_color=(0.15, 0.45, 0.85, 1),
+            bold=True
+        )
+        self.btn_refresh.bind(on_press=lambda x: self.fetch_data_and_refresh())
+        self.nav_layout.add_widget(self.btn_refresh)
+        
+        self.main_layout.add_widget(self.nav_layout)
 
-        btn_refresh = Button(text="Yenile", background_color=(0.2, 0.6, 1, 1))
-        btn_refresh.bind(on_press=lambda x: self.load_jobs())
-        btn_layout.add_widget(btn_refresh)
-
-        main_layout.add_widget(btn_layout)
-
-        # Liste Alanı
-        self.scroll = ScrollView()
-        self.grid = GridLayout(cols=1, spacing=10, size_hint_y=None)
+        # Kaydırılabilir İçerik
+        self.scroll = ScrollView(do_scroll_x=False)
+        self.grid = GridLayout(cols=1, spacing=10, size_hint_y=None, padding=[0, 5, 0, 5])
         self.grid.bind(minimum_height=self.grid.setter('height'))
         self.scroll.add_widget(self.grid)
 
-        main_layout.add_widget(self.scroll)
+        self.main_layout.add_widget(self.scroll)
 
-        Clock.schedule_once(lambda dt: self.load_jobs(), 1)
-        return main_layout
+        Clock.schedule_once(lambda dt: self.fetch_data_and_refresh(), 0.5)
+        return self.main_layout
 
-    # Dosya Seçici Penceresi (Popup)
-    def open_file_chooser(self, instance):
-        content = BoxLayout(orientation='vertical')
-        filechooser = FileChooserListView(path='/sdcard', filters=['*.xlsx'])
-        content.add_widget(filechooser)
-
-        btn_layout = BoxLayout(size_hint_y=None, height=40, spacing=10)
-        btn_select = Button(text="Yükle")
-        btn_cancel = Button(text="İptal")
-        
-        btn_layout.add_widget(btn_select)
-        btn_layout.add_widget(btn_cancel)
-        content.add_widget(btn_layout)
-
-        popup = Popup(title="Excel Dosyası Seçin (.xlsx)", content=content, size_hint=(0.9, 0.9))
-
-        def load_selected_file(btn):
-            if filechooser.selection:
-                popup.dismiss()
-                self.process_and_upload_excel(filechooser.selection[0])
-
-        btn_select.bind(on_press=load_selected_file)
-        btn_cancel.bind(on_press=popup.dismiss)
-        popup.open()
-
-    # Excel Okuma, Süzme ve Mükerrer Temizleme Mantığı
-    def process_and_upload_excel(self, file_path):
-        try:
-            wb = openpyxl.load_workbook(file_path, data_only=True)
-            sheet = wb.active
-
-            unique_records = {}
-            # Excel başlıklarını atlayıp satırları tarıyoruz
-            for row in sheet.iter_rows(min_row=2, values_only=True):
-                if not row or not row[0]: 
-                    continue
-
-                # Excel sütun sıralamasına göre eşleme:
-                # row[0]: Sipariş No, row[1]: İstasyon/İşlem Adımı, row[2]: Açıklama/Başlık, row[3]: Hafta
-                order_no = str(row[0]).strip()
-                workstation = str(row[1]).strip() if len(row) > 1 else ""
-                title = str(row[2]).strip() if len(row) > 2 else ""
-                week = str(row[3]).strip() if len(row) > 3 else "2026-W30"
-
-                # 1. Filtre: Sadece Y-STATK1 ile Y-STATK9 arasındaki istasyonlar
-                if workstation in VALID_WORKSTATIONS:
-                    # 2. Mükerrer Engelleme: Aynı Hafta + Sipariş No + İstasyon tekil anahtar yapılır
-                    unique_key = f"{week}_{order_no}_{workstation}"
-                    
-                    unique_records[unique_key] = {
-                        "order_no": order_no,
-                        "workstation": workstation,
-                        "title": title,
-                        "week": week,
-                        "status": "Bekliyor"
-                    }
-
-            # Verileri Firebase Realtime Database'e gönderme
-            if unique_records:
-                for record_key, payload in unique_records.items():
-                    requests.patch(f"{FIREBASE_URL}/weekly_plan/{record_key}.json", data=json.dumps(payload))
-                
-                self.load_jobs()
-
-        except Exception as e:
-            print(f"Excel Okuma Hatası: {e}")
-
-    # Firebase'den Listeleme
-    def load_jobs(self):
-        self.grid.clear_widgets()
+    def fetch_data_and_refresh(self):
+        """Firebase'den verileri çeker"""
         try:
             response = requests.get(f"{FIREBASE_URL}/weekly_plan.json", timeout=10)
             if response.status_code == 200 and response.json():
-                jobs = response.json()
-                count = 0
-                for job_id, data in jobs.items():
-                    if isinstance(data, dict):
-                        card = BoxLayout(orientation='vertical', size_hint_y=None, height=110, padding=10, spacing=5)
-                        
-                        title_text = f"[{data.get('workstation', '-')}] Sipariş: {data.get('order_no', '-')}"
-                        detail_text = f"{data.get('title', '')} | Durum: {data.get('status', 'Bekliyor')}"
-                        
-                        card.add_widget(Label(text=title_text, bold=True, size_hint_y=None, height=25))
-                        card.add_widget(Label(text=detail_text, size_hint_y=None, height=25))
-
-                        if data.get('status') != 'Tamamlandı':
-                            btn_complete = Button(text="Tamamla", size_hint_y=None, height=35, background_color=(0, 0.8, 0.2, 1))
-                            btn_complete.bind(on_press=lambda btn, j_id=job_id: self.complete_job(j_id))
-                            card.add_widget(btn_complete)
-
-                        self.grid.add_widget(card)
-                        count += 1
-
-                if count == 0:
-                    self.grid.add_widget(Label(text="İş kaydı bulunamadı.", size_hint_y=None, height=40))
+                self.all_jobs = response.json()
+            else:
+                self.all_jobs = {}
         except Exception as e:
-            self.grid.add_widget(Label(text=f"Bağlantı Hatası: {str(e)}", size_hint_y=None, height=50))
+            print(f"Veri çekme hatası: {e}")
+            self.all_jobs = {}
 
-    def complete_job(self, job_id):
-        try:
-            patch_data = {"status": "Tamamlandı"}
-            requests.patch(f"{FIREBASE_URL}/weekly_plan/{job_id}.json", data=json.dumps(patch_data), timeout=5)
-            self.load_jobs()
-        except Exception as e:
-            print(f"Güncelleme hatası: {e}")
+        if self.current_week:
+            self.show_orders_screen(self.current_week)
+        else:
+            self.show_weeks_screen()
+
+    # -------------------------------------------------------------
+    # EKRAN 1: HAFTA SEÇİM EKRANI
+    # -------------------------------------------------------------
+    def show_weeks_screen(self):
+        self.current_week = None
+        self.header.text = "Hafta Seçiniz"
+        self.btn_back.disabled = True
+        self.grid.clear_widgets()
+
+        weeks = set()
+        for job_id, data in self.all_jobs.items():
+            if isinstance(data, dict):
+                week = data.get('week', 'Diğer')
+                weeks.add(week)
+
+        sorted_weeks = sorted(list(weeks))
+
+        if not sorted_weeks:
+            self.grid.add_widget(Label(text="Kayıtlı hafta verisi bulunamadı.", color=(0.7, 0.7, 0.7, 1)))
+            return
+
+        for week in sorted_weeks:
+            btn_week = Button(
+                text=f"📅  {week}",
+                size_hint_y=None,
+                height=60,
+                background_normal='',
+                background_color=(0.20, 0.22, 0.28, 1),
+                font_size='17sp',
+                bold=True,
+                color=(0.35, 0.75, 1, 1)
+            )
+            btn_week.bind(on_press=lambda instance, w=week: self.show_orders_screen(w))
+            self.grid.add_widget(btn_week)
+
+    # -------------------------------------------------------------
+    # EKRAN 2: SİPARİŞ LİSTESİ EKRANI (Tekil Siparişler)
+    # -------------------------------------------------------------
+    def show_orders_screen(self, week_name):
+        self.current_week = week_name
+        self.header.text = f"Siparişler ({week_name})"
+        self.btn_back.disabled = False
+        self.grid.clear_widgets()
+
+        # Sipariş bazlı gruplama (Her sipariş 1 kez görünecek)
+        grouped_orders = {}
+
+        for job_id, data in self.all_jobs.items():
+            if isinstance(data, dict) and data.get('week') == week_name:
+                order_no = data.get('order_no', 'Tanımsız')
+                if order_no not in grouped_orders:
+                    grouped_orders[order_no] = {
+                        "title": data.get('title', ''),
+                        "status_note": data.get('status_note', ''),
+                        "items": []
+                    }
+                grouped_orders[order_no]["items"].append((job_id, data))
+
+        if not grouped_orders:
+            self.grid.add_widget(Label(text="Bu haftaya ait sipariş bulunamadı.", color=(0.7, 0.7, 0.7, 1)))
+            return
+
+        for order_no, order_data in grouped_orders.items():
+            card = BoxLayout(orientation='vertical', size_hint_y=None, padding=12, spacing=6)
+            
+            with card.canvas.before:
+                Color(0.18, 0.20, 0.23, 1)
+                card.rect = RoundedRectangle(pos=card.pos, size=card.size, radius=[8])
+            card.bind(pos=self._update_rect, size=self._update_rect)
+
+            # Sipariş Başlığı
+            lbl_title = Label(
+                text=f"📦 Sipariş No: {order_no}",
+                size_hint_y=None, height=25,
+                font_size='16sp', bold=True,
+                color=(1, 0.8, 0.3, 1), halign='left'
+            )
+            lbl_title.bind(size=lbl_title.setter('text_size'))
+            card.add_widget(lbl_title)
+
+            # İş Tanımı / Kısa Metin
+            lbl_desc = Label(
+                text=order_data["title"],
+                size_hint_y=None, height=22,
+                font_size='13sp', color=(0.8, 0.8, 0.8, 1), halign='left'
+            )
+            lbl_desc.bind(size=lbl_desc.setter('text_size'))
+            card.add_widget(lbl_desc)
+
+            # Mevcut Durum / Açıklama Notu Var Mı?
+            note_text = f"💬 Durum Notu: {order_data['status_note']}" if order_data['status_note'] else "💬 Durum Notu: Eklenmedi"
+            lbl_note = Label(
+                text=note_text,
+                size_hint_y=None, height=20,
+                font_size='12sp', color=(0.4, 0.8, 0.5, 1) if order_data['status_note'] else (0.5, 0.5, 0.5, 1),
+                halign='left'
+            )
+            lbl_note.bind(size=lbl_note.setter('text_size'))
+            card.add_widget(lbl_note)
+
+            # Tıklama Butonu (Detay & Açıklama Gir)
+            btn_detail = Button(
+                text="Detay Gör & Durum Açıklaması Yaz",
+                size_hint_y=None, height=35,
+                background_normal='', background_color=(0.2, 0.6, 0.4, 1),
+                bold=True, font_size='12sp'
+            )
+            btn_detail.bind(on_press=lambda inst, o_no=order_no, o_data=order_data: self.open_order_popup(o_no, o_data))
+            card.add_widget(btn_detail)
+
+            card.height = sum(child.height for child in card.children) + 25
+            self.grid.add_widget(card)
+
+    # -------------------------------------------------------------
+    # DETAY & DURUM AÇIKLAMASI EKLENEN POPUP
+    # -------------------------------------------------------------
+    def open_order_popup(self, order_no, order_data):
+        content = BoxLayout(orientation='vertical', padding=10, spacing=10)
+
+        # Mevcut Alt Adımlar Özet Bilgisi
+        stations = [d.get('workstation', '') for j_id, d in order_data['items']]
+        content.add_widget(Label(
+            text=f"İstasyon Adımları: {', '.join(stations)}", 
+            size_hint_y=None, height=25, font_size='12sp', color=(0.7, 0.7, 0.7, 1)
+        ))
+
+        content.add_widget(Label(
+            text="İş Durumu / Açıklama Notu:", 
+            size_hint_y=None, height=20, bold=True, halign='left'
+        ))
+
+        # Açıklama Yazma Kutusu
+        txt_input = TextInput(
+            text=order_data.get('status_note', ''),
+            multiline=True,
+            size_hint_y=None,
+            height=90,
+            background_color=(0.15, 0.15, 0.18, 1),
+            foreground_color=(1, 1, 1, 1)
+        )
+        content.add_widget(txt_input)
+
+        btn_layout = BoxLayout(size_hint_y=None, height=40, spacing=10)
+        btn_save = Button(text="Kaydet", background_normal='', background_color=(0.2, 0.7, 0.3, 1), bold=True)
+        btn_cancel = Button(text="Kapat", background_normal='', background_color=(0.6, 0.2, 0.2, 1), bold=True)
+
+        btn_layout.add_widget(btn_save)
+        btn_layout.add_widget(btn_cancel)
+        content.add_widget(btn_layout)
+
+        popup = Popup(title=f"Sipariş No: {order_no}", content=content, size_hint=(0.9, 0.5))
+
+        def save_status_note(btn):
+            new_note = txt_input.text.strip()
+            # O siparişe ait tüm Firebase alt adımlarına bu notu güncelle
+            for job_id, _ in order_data['items']:
+                try:
+                    patch_data = {"status_note": new_note}
+                    requests.patch(f"{FIREBASE_URL}/weekly_plan/{job_id}.json", data=json.dumps(patch_data), timeout=5)
+                except Exception as e:
+                    print(f"Not kaydetme hatası: {e}")
+
+            popup.dismiss()
+            self.fetch_data_and_refresh()
+
+        btn_save.bind(on_press=save_status_note)
+        btn_cancel.bind(on_press=popup.dismiss)
+        popup.open()
+
+    def _update_rect(self, instance, value):
+        instance.rect.pos = instance.pos
+        instance.rect.size = instance.size
 
 if __name__ == '__main__':
     SiparisTakipApp().run()
