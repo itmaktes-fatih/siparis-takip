@@ -7,11 +7,11 @@ source.include_exts = py,png,jpg,kv,atlas,json
 version = 1.0.0
 
 # Sadece Kivy ve temel ağ kütüphaneleri (firebase-admin kesinlikle YOK)
-requirements = python3,kivy,requests,urllib3,certifi,chardet,idna
+requirements = python3,kivy==2.2.1,requests,openpyxl,urllib3,certifi,chardet,idna
 
 orientation = portrait
 fullscreen = 0
-android.permissions = INTERNET
+android.permissions = INTERNET,READ_EXTERNAL_STORAGE,WRITE_EXTERNAL_STORAGE
 
 # Sadece 64-bit modern Android cihazlar için derle (Süreci %50 hızlandırır ve bellek taşmasını önler)
 android.archs = arm64-v8a
