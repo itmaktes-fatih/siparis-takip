@@ -8,31 +8,34 @@ from kivy.clock import Clock
 import requests
 import json
 
-# Firebase Realtime / Firestore REST URL'iniz (Örn: https://PROJE_ID.firebaseio.com)
-FIREBASE_URL = "https://SİZİN_FIREBASE_PROJE_ID.firebaseio.com"
+# Tam ve Doğruluk Kazanan Realtime Database Adresiniz
+FIREBASE_URL = "https://siparis-takip-6046b-default-rtdb.europe-west1.firebasedatabase.app"
 
 class SiparisTakipApp(App):
     def build(self):
-        main_layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
+        main_layout = BoxLayout(orientation='vertical', padding=15, spacing=10)
 
+        # Başlık Alanı
         header = Label(
             text="Sipariş & İş Takip Sistemi", 
             size_hint_y=None, 
-            height=50, 
-            font_size='20sp',
+            height=40, 
+            font_size='18sp',
             bold=True
         )
         main_layout.add_widget(header)
 
+        # Yenile Butonu
         btn_refresh = Button(
             text="İş Listesini Yenile", 
             size_hint_y=None, 
-            height=50,
+            height=45,
             background_color=(0.2, 0.6, 1, 1)
         )
         btn_refresh.bind(on_press=lambda x: self.load_jobs())
         main_layout.add_widget(btn_refresh)
 
+        # Kaydırılabilir İçerik Alanı
         self.scroll = ScrollView()
         self.grid = GridLayout(cols=1, spacing=10, size_hint_y=None)
         self.grid.bind(minimum_height=self.grid.setter('height'))
@@ -46,7 +49,7 @@ class SiparisTakipApp(App):
     def load_jobs(self):
         self.grid.clear_widgets()
         try:
-            # REST API üzerinden verileri çekiyoruz
+            # Firebase Realtime Database üzerinden verileri çekiyoruz
             response = requests.get(f"{FIREBASE_URL}/weekly_plan.json", timeout=10)
             
             if response.status_code == 200 and response.json():
@@ -54,7 +57,7 @@ class SiparisTakipApp(App):
                 count = 0
                 for job_id, data in jobs.items():
                     if isinstance(data, dict):
-                        card = BoxLayout(orientation='vertical', size_hint_y=None, height=120, padding=8, spacing=5)
+                        card = BoxLayout(orientation='vertical', size_hint_y=None, height=110, padding=10, spacing=5)
                         
                         title_text = f"[{data.get('workstation', '-')}] Sipariş: {data.get('order_no', '-')}"
                         detail_text = f"{data.get('title', '')} | Durum: {data.get('status', 'Bekliyor')}"
@@ -73,10 +76,10 @@ class SiparisTakipApp(App):
                 if count == 0:
                     self.grid.add_widget(Label(text="İş kaydı bulunamadı.", size_hint_y=None, height=40))
             else:
-                self.grid.add_widget(Label(text="Veri bulunamadı veya bağlantı hatası.", size_hint_y=None, height=40))
+                self.grid.add_widget(Label(text="Henüz veri yok veya bağlantı bekleniyor.", size_hint_y=None, height=40))
 
         except Exception as e:
-            self.grid.add_widget(Label(text=f"Bağlantı Hatası: {str(e)}", size_hint_y=None, height=40))
+            self.grid.add_widget(Label(text=f"Bağlantı Hatası: {str(e)}", size_hint_y=None, height=50))
 
     def complete_job(self, job_id):
         try:
