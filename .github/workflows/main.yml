@@ -27,10 +27,10 @@ jobs:
             autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev \
             cmake libsqlite3-dev
 
-      - name: Install Buildozer & Cython
+      - name: Install Buildozer & Cython Uyumlu Sürüm
         run: |
           pip install --upgrade pip setuptools
-          pip install buildozer cython==0.29.33
+          pip install "cython<3.0.0" buildozer
 
       - name: Build APK with Buildozer
         run: |
