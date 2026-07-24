@@ -7,7 +7,7 @@ source.include_exts = py,png,jpg,kv,atlas,json
 version = 1.0.0
 
 # Sadece Kivy ve temel ağ kütüphaneleri (firebase-admin kesinlikle YOK)
-requirements = python3,kivy==2.2.1,requests,openpyxl,urllib3,certifi,chardet,idna
+requirements = python3,kivy,requests,urllib3,chardet,certifi,idna
 
 orientation = portrait
 fullscreen = 0
