@@ -11,9 +11,10 @@ from kivy.clock import Clock
 from kivy.core.window import Window
 import requests
 import json
+from config import FIREBASE_URL
+from excel_import import read_excel
 
 Window.clearcolor = (0.12, 0.12, 0.14, 1)
-FIREBASE_URL = "https://siparis-takip-6046b-default-rtdb.europe-west1.firebasedatabase.app"
 
 class SiparisTakipApp(App):
     def build(self):
@@ -54,6 +55,17 @@ class SiparisTakipApp(App):
         )
         self.btn_refresh.bind(on_press=lambda x: self.fetch_data_and_refresh())
         self.nav_layout.add_widget(self.btn_refresh)
+        self.btn_import = Button(
+            text="📂 Excel Yükle",
+            size_hint_x=0.7,
+            background_normal='',
+            background_color=(0.15, 0.55, 0.25, 1),
+            bold=True
+        )
+
+        self.btn_import.bind(on_press=self.import_excel)
+
+        self.nav_layout.add_widget(self.btn_import)
         
         self.main_layout.add_widget(self.nav_layout)
 
@@ -254,6 +266,17 @@ class SiparisTakipApp(App):
         btn_cancel.bind(on_press=popup.dismiss)
         popup.open()
 
+    def import_excel(self, instance):
+    print("Excel Yükleme Yakında Aktif")
+
+    popup = Popup(
+        title="Bilgi",
+        content=Label(text="Excel yükleme modülü hazırlanıyor."),
+        size_hint=(0.6,0.3)
+    )
+
+    popup.open()
+    
     def _update_rect(self, instance, value):
         instance.rect.pos = instance.pos
         instance.rect.size = instance.size
