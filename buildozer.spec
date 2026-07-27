@@ -2,7 +2,7 @@
 title = Siparis Takip
 package.name = siparistakip
 package.domain = com.mimas.siparistakip
-source.dir = .
+source.dir = app
 source.include_exts = py,png,jpg,kv,atlas,json
 version = 1.0.0
 
