@@ -267,7 +267,7 @@ class SiparisTakipApp(App):
         popup.open()
 
     def import_excel(self, instance):
-    print("Excel Yükleme Yakında Aktif")
+        print("Excel Yükleme Yakında Aktif")
 
     popup = Popup(
         title="Bilgi",
